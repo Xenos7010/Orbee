@@ -1,0 +1,77 @@
+name: Build APK
+
+# Se lance à chaque push sur main, à la main (onglet Actions > Run workflow),
+# et publie une Release quand tu crées un tag du type v1.0.0
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  apk:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Récupérer le code
+        uses: actions/checkout@v4
+
+      - name: Installer Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Installer Java 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 21
+
+      - name: Installer les dépendances
+        run: npm install --no-audit --no-fund
+
+      - name: Construire le site web
+        run: npm run build
+
+      - name: Créer le projet Android
+        run: npx cap add android
+
+      - name: Générer les icônes et l'écran de démarrage
+        continue-on-error: true
+        run: npx capacitor-assets generate --android
+
+      - name: Autoriser la caméra (scanner)
+        run: |
+          MANIFEST=android/app/src/main/AndroidManifest.xml
+          if ! grep -q "android.permission.CAMERA" "$MANIFEST"; then
+            sed -i 's#</manifest>#    <uses-permission android:name="android.permission.CAMERA" />\n    <uses-feature android:name="android.hardware.camera" android:required="false" />\n</manifest>#' "$MANIFEST"
+          fi
+          grep -n "CAMERA" "$MANIFEST"
+
+      - name: Synchroniser Capacitor
+        run: npx cap sync android
+
+      - name: Compiler l'APK
+        working-directory: android
+        run: |
+          chmod +x ./gradlew
+          ./gradlew assembleDebug --no-daemon
+
+      - name: Renommer l'APK
+        run: cp android/app/build/outputs/apk/debug/app-debug.apk ORBE.apk
+
+      - name: Télécharger l'APK (onglet Artifacts du run)
+        uses: actions/upload-artifact@v4
+        with:
+          name: ORBE-apk
+          path: ORBE.apk
+
+      - name: Publier une Release (si tag v*)
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: ORBE.apk
+          
